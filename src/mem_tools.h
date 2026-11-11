@@ -18,33 +18,11 @@ char* get_caller_function_from_rip(void* rip);
 void print_backtraceo(int backtrace_max_depth);
 
 
+/* Date in ns, on the clock numap asks the kernel to use for samples. */
 static inline uint64_t new_date() {
   struct timespec t;
   clock_gettime(CLOCK_MONOTONIC_RAW, &t);
   return t.tv_sec*1e9+t.tv_nsec;
-
-#ifdef __x86_64__
-  // This is a copy of rdtscll function from asm/msr.h
-#define ticks(val) do {					\
-    uint32_t __a,__d;					\
-    asm volatile("rdtsc" : "=a" (__a), "=d" (__d));	\
-    (val) = ((uint64_t)__a) | (((uint64_t)__d)<<32);	\
-  } while(0)
-
-#elif defined(__i386)
-
-#define ticks(val)                              \
-  __asm__ volatile("rdtsc" : "=A" (val))
-
-#else
-  ERROR_TIMER_NOT_AVAILABLE();
-#define ticks(val) (val) = -1
-#endif
-
-  uint64_t time;
-  ticks(time);
-
-  return time;
 }
 
 

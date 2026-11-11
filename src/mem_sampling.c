@@ -185,6 +185,8 @@ void mem_sampling_init() {
     fprintf(stderr, "Error while initializing numap: %s\n", numap_error_message(err));
     abort();
   }
+  if(settings.verbose)
+    printf("[NumaMMA] sampling backend: %s\n", numap_backend_name());
 
   if(settings.alarm) {   
     __alarm_interval = settings.alarm* 1000000;
@@ -390,6 +392,8 @@ void mem_sampling_resume() {
     fprintf(stderr, "numap_sampling_resume error : %s\n", numap_error_message(res));
     if(res ==  ERROR_PERF_EVENT_OPEN && errno == EACCES) {
       fprintf(stderr, "try running 'echo 1 > /proc/sys/kernel/perf_event_paranoid' to fix the problem\n");
+      if(numap_backend() == NUMAP_BACKEND_IBS)
+        fprintf(stderr, "(AMD IBS samples the kernel too: it needs perf_event_paranoid <= 1 or CAP_PERFMON)\n");
     }
     abort();
   }
@@ -439,6 +443,8 @@ void mem_sampling_start() {
     fprintf(stderr, "numap_sampling_read_start error : %s\n", numap_error_message(res));
     if(res ==  ERROR_PERF_EVENT_OPEN && errno == EACCES) {
       fprintf(stderr, "try running 'echo 1 > /proc/sys/kernel/perf_event_paranoid' to fix the problem\n");
+      if(numap_backend() == NUMAP_BACKEND_IBS)
+        fprintf(stderr, "(AMD IBS samples the kernel too: it needs perf_event_paranoid <= 1 or CAP_PERFMON)\n");
     }
     abort();
   }
