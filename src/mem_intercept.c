@@ -133,6 +133,80 @@ GENERIC_MALLOC(malloc, MEM_TYPE_MALLOC, libmalloc);
 GENERIC_MALLOC(_Znwj, MEM_TYPE_NEW, libmalloc);
 GENERIC_MALLOC(_Znwm, MEM_TYPE_NEW, libmalloc);
 
+/* Aligned allocations (posix_memalign, aligned_alloc, memalign, valloc,
+ * pvalloc). Without them, free() would read a header that does not exist. */
+static void* aligned_malloc(size_t alignment, size_t size) {
+  if (alignment < 16)
+    alignment = 16;
+  if ((alignment & (alignment - 1)) || size > SIZE_MAX - alignment - HEADER_SIZE - TAIL_SIZE)
+    return NULL;
+  if (!libmalloc) {
+    void* p = malloc(1); /* resolves libmalloc */
+    free(p);
+  }
+  size_t total = size + alignment + HEADER_SIZE + TAIL_SIZE;
+  PROTECT_FROM_RECURSION;
+  void* p_ptr = libmalloc(total);
+  UNPROTECT_FROM_RECURSION;
+  if (!p_ptr)
+    return NULL;
+  uintptr_t u = ((uintptr_t)p_ptr + HEADER_SIZE + alignment - 1) & ~(uintptr_t)(alignment - 1);
+  struct mem_block_info *p_block = (struct mem_block_info*)(u - HEADER_SIZE);
+  p_block->p_ptr = p_ptr;
+  p_block->total_size = total;
+  p_block->size = size;
+  p_block->tail_block = (struct mem_tail_block*)(u + size);
+  p_block->tail_block->canary = CANARY_PATTERN;
+  p_block->record_info = NULL;
+  p_block->u_ptr = (void*)u;
+  p_block->canary = CANARY_PATTERN;
+
+  if(__memory_initialized && IS_RECURSE_SAFE) {
+    PROTECT_FROM_RECURSION;
+    p_block->mem_type = MEM_TYPE_MALLOC;
+    ma_record_malloc(p_block);
+    UNPROTECT_FROM_RECURSION;
+  } else {
+    p_block->mem_type = MEM_TYPE_INTERNAL_MALLOC;
+  }
+  return p_block->u_ptr;
+}
+
+int posix_memalign(void **memptr, size_t alignment, size_t size) {
+  if (alignment % sizeof(void*))
+    return EINVAL;
+  void* p = aligned_malloc(alignment, size);
+  if (!p)
+    return ENOMEM;
+  *memptr = p;
+  return 0;
+}
+
+void* aligned_alloc(size_t alignment, size_t size) {
+  return aligned_malloc(alignment, size);
+}
+
+void* memalign(size_t alignment, size_t size) {
+  return aligned_malloc(alignment, size);
+}
+
+void* valloc(size_t size) {
+  return aligned_malloc(sysconf(_SC_PAGESIZE), size);
+}
+
+void* pvalloc(size_t size) {
+  size_t page = sysconf(_SC_PAGESIZE);
+  return aligned_malloc(page, (size + page - 1) & ~(page - 1));
+}
+
+size_t malloc_usable_size(void *ptr) {
+  if (!ptr)
+    return 0;
+  struct mem_block_info *p_block;
+  USER_PTR_TO_BLOCK_INFO(ptr, p_block);
+  return p_block ? p_block->size : 0;
+}
+
 void* realloc(void *ptr, size_t size) {
 
   /* if ptr is NULL, realloc behaves like malloc */
@@ -180,7 +254,12 @@ void* realloc(void *ptr, size_t size) {
     return pptr;
   }
   void *old_addr= p_block->u_ptr;
+  size_t old_offset = (char*)p_block->u_ptr - (char*)p_block->p_ptr;
   void *pptr = librealloc(p_block->p_ptr, size + header_size);
+  if (!pptr)
+    return NULL;
+  if (old_offset != HEADER_SIZE)
+    memmove((char*)pptr + HEADER_SIZE, (char*)pptr + old_offset, old_size < size ? old_size : size);
   INIT_MEM_INFO(p_block, pptr, size, 1);
 
   if(__memory_initialized && IS_RECURSE_SAFE) {
@@ -213,22 +292,21 @@ void* calloc(size_t nmemb, size_t size) {
     return ret;
   }
 
-  /* compute the number of blocks for header */
-  int nb_memb_header = (HEADER_SIZE)/ size;
-  if (size * nb_memb_header < HEADER_SIZE)
-    nb_memb_header++;
-
-  int nb_memb_tail = (TAIL_SIZE)/ size;
-  if (size * nb_memb_tail < TAIL_SIZE)
-    nb_memb_tail++;
-
-  /* allocate buffer + header */
+  /* Allocate header + buffer + tail in bytes: a header counted in
+   * elements of `size` bytes would misalign the user block (e.g. size=24). */
+  size_t bytes;
+  if (__builtin_mul_overflow(nmemb, size, &bytes) || bytes > SIZE_MAX - HEADER_SIZE - TAIL_SIZE) {
+    errno = ENOMEM;
+    return NULL;
+  }
   PROTECT_FROM_RECURSION;
-  void* p_ptr = libcalloc(nmemb + nb_memb_header + nb_memb_tail, size);
+  void* p_ptr = libcalloc(1, bytes + HEADER_SIZE + TAIL_SIZE);
   UNPROTECT_FROM_RECURSION;
-  
+  if (!p_ptr)
+    return NULL;
+
   struct mem_block_info *p_block = NULL;
-  INIT_MEM_INFO(p_block, p_ptr, nmemb, size);
+  INIT_MEM_INFO(p_block, p_ptr, bytes, 1);
 
   if(__memory_initialized && IS_RECURSE_SAFE) {
     PROTECT_FROM_RECURSION;

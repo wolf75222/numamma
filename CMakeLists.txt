@@ -57,6 +57,12 @@ else (LIBELF_FOUND)
   message(FATAL_ERROR "libelf not found")
 endif (LIBELF_FOUND)
 
+# libnumamma is preloaded and its malloc reads thread-local variables. With
+# the default global-dynamic model, a TLS access may call __tls_get_addr,
+# which calls free() after a dlopen: infinite recursion (seen with Python
+# extension modules). The initial-exec model avoids __tls_get_addr.
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -ftls-model=initial-exec")
+
 option(ENABLE_DEBUG "Enable Debug" ON)
 if(ENABLE_DEBUG)
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O0 -g")
