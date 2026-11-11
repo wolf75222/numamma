@@ -636,8 +636,22 @@ void ma_register_stack() {
   char cmd[4096];
   char line[4096];
 
-  uintptr_t stack_base_addr= (uintptr_t)0x7fa000000000;
-  uintptr_t stack_end_addr= (uintptr_t)0x7fffffffffff;
+  /* Register the 384 GB below the top of the main stack, as the original
+   * x86-64 constants did (0x7fa000000000-0x7fffffffffff). On aarch64 the
+   * stack sits near 0xffffffffffff, so read its top from /proc/self/maps. */
+  uintptr_t stack_end_addr = (uintptr_t)0x7fffffffffff;
+  FILE* maps = fopen("/proc/self/maps", "r");
+  if(maps) {
+    while(fgets(line, sizeof(line), maps) != NULL) {
+      uintptr_t b = 0, e = 0;
+      if(strstr(line, "[stack]") && sscanf(line, "%"SCNxPTR"-%"SCNxPTR, &b, &e) == 2) {
+	stack_end_addr = e - 1;
+	break;
+      }
+    }
+    fclose(maps);
+  }
+  uintptr_t stack_base_addr = stack_end_addr - (uintptr_t)0x5fffffffff;
   __ma_register_stack_range(stack_base_addr, stack_end_addr);
   return;
   
