@@ -43,6 +43,21 @@ The above dependencies must be installed first. Then NumaMMa itself can be built
 
 You can also run the `install_everything.sh` script that installs NumaMMa and its dependencies. You can also run the following commands to download and build NumaMMa with all its dependencies.
 
+## AMD, Arm and Python
+
+This fork works with the IBS (AMD) and SPE (Arm) backends of the numap fork
+(`wolf75222/numap`, branch `portage-ibs-spe`). With these backends, samples
+are collected when the application allocates or frees memory and when the
+alarm fires: use `--alarm=10`, otherwise samples wait until the next
+allocation. On AMD, IBS needs `perf_event_paranoid <= 1` or `CAP_PERFMON`.
+
+Python programs run under NumaMMA (`numamma --alarm=10 $(which python3)
+script.py`). numpy arrays are allocated with `malloc` or `calloc`, so they
+appear as memory objects with their size; their call site is the numpy
+function that allocates them, the same for every array. CPython's small
+objects live in arenas mapped with `mmap`, which NumaMMA does not
+intercept: their samples are reported as unmatched.
+
 ## Profiling an application
 
 To profile your application with NumaMMa, just launch it through the `numamma` command installed when NumaMMa has been built:
