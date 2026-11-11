@@ -79,6 +79,7 @@ struct thread_info {
   struct numap_sampling_measure* sm_wr;
   pid_t tid;
   int rank;
+  int finalized;
 };
 
 struct thread_info *thread_ranks = NULL;
@@ -108,6 +109,7 @@ static void register_thread_pid(pid_t pid,
   thread_ranks[rank].rank = rank;
   thread_ranks[rank].sm = sm;
   thread_ranks[rank].sm_wr = sm_wr;
+  thread_ranks[rank].finalized = 0;
 }
 
 /* called at runtime when the sample buffer has to be emptied
@@ -351,9 +353,30 @@ void mem_sampling_thread_finalize() {
   if(!status_initialized)
     return;
   mem_sampling_collect_samples();
+  struct thread_info *me = get_thread_info(syscall(SYS_gettid));
+  if(me)
+    me->finalized = 1;
   numap_sampling_end(&sm);
   numap_sampling_end(&sm_wr);
   status_finalized = 1;
+}
+
+/* Called at exit by the main thread: collect the samples of the threads
+ * that are still alive (e.g. idle OpenBLAS or OpenMP workers) without
+ * cancelling them. Cancelling a thread that holds a lock deadlocks the
+ * library's own exit handlers. */
+void mem_sampling_collect_other_threads() {
+  pid_t self = syscall(SYS_gettid);
+  for(int i=0; i<nthreads; i++) {
+    struct thread_info *t = &thread_ranks[i];
+    if(t->tid == self || t->finalized)
+      continue;
+    if(numap_sampling_read_stop(t->sm) == 0)
+      __process_samples(t->sm, ACCESS_READ);
+    if(numap_sampling_write_supported() && numap_sampling_write_stop(t->sm_wr) == 0)
+      __process_samples(t->sm_wr, ACCESS_WRITE);
+    t->finalized = 1;
+  }
 }
 
 void mem_sampling_statistics() {

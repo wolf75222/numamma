@@ -17,6 +17,7 @@
 #include "numamma.h"
 #include "mem_intercept.h"
 #include "mem_analyzer.h"
+#include "mem_sampling.h"
 #include "mem_tools.h"
 
 struct numamma_settings settings;
@@ -621,27 +622,13 @@ static void __memory_init(void) {
 }
 
 void wait_for_other_threads() {
-  int i;
-  for(i=0; i<nb_threads; i++) {
-    /* the thread is still running */
-    if(thread_array[i].status == thread_status_created) {
-      /* ask the thread to stop */
-      int retval = pthread_cancel(thread_array[i].tid);
-      if(retval != 0) {
-	fprintf(stderr, "pthread_cancel failed (%s)\n", strerror(errno));
-	abort();
-      }
-
-      /* wait until the thread stopped */
-
-      /* we could use pthread_join, but join may fail if the thread is not joinable (OpenMP
-       * thread for instance)
-       */
-      while(thread_array[i].status == thread_status_created) {
-	sched_yield();
-      }
-
-    }
+  /* Threads still running at exit are not cancelled (an asynchronous
+   * cancel can leave a lock held, e.g. in OpenBLAS): the main thread
+   * collects their samples instead. */
+  mem_sampling_collect_other_threads();
+  for(int i=0; i<nb_threads; i++) {
+    if(thread_array[i].status == thread_status_created)
+      thread_array[i].status = thread_status_finalized;
   }
 }
 
